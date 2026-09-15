@@ -124,6 +124,7 @@
     excluirPandemia: false,
     trendFrom: null,
     periodMode: 'anual',
+    casinosComparadorModo: 'acumulado',
   };
 
   function yearsInRange(yFrom, yTo) {
@@ -1201,6 +1202,14 @@
           <button class="btn btn-secondary" id="btn-casinos-ninguno" type="button" style="padding:5px 12px; font-size:12px;">Quitar todos</button>
         </div>
         <div class="checkbox-list" id="casino-checklist"></div>
+        <div class="filter-row" style="margin-top:16px;">
+          <label for="sel-comparador-modo">Cada año se muestra como</label>
+          <select id="sel-comparador-modo">
+            <option value="acumulado" ${state.casinosComparadorModo === 'acumulado' ? 'selected' : ''}>Acumulado (mismo período en todos los años)</option>
+            <option value="anual" ${state.casinosComparadorModo === 'anual' ? 'selected' : ''}>Año completo (o meses disponibles)</option>
+            <option value="promedio" ${state.casinosComparadorModo === 'promedio' ? 'selected' : ''}>Promedio mensual del año</option>
+          </select>
+        </div>
         <div class="section-title" style="margin-top:16px; font-size:14px;">Evolución de Ingresos Brutos del Juego por casino</div>
         <div class="chart-wrap tall"><canvas id="chart-casinos-comp"></canvas></div>
         <div class="section-title" style="margin-top:16px; font-size:14px;">Evolución de Visitas por casino</div>
@@ -1250,6 +1259,11 @@
       renderCasinosComparador();
       renderCasinosComparadorVisitas();
     });
+    document.getElementById('sel-comparador-modo').addEventListener('change', (ev) => {
+      state.casinosComparadorModo = ev.target.value;
+      renderCasinosComparador();
+      renderCasinosComparadorVisitas();
+    });
   }
 
   function renderCasinoChecklist() {
@@ -1271,12 +1285,29 @@
     });
   }
 
+  // Valor de un casino en un año para el comparador, según el modo elegido en
+  // state.casinosComparadorModo:
+  //  - 'acumulado': mismo período (Ene-hastaMesAcum) en todos los años, para comparar años
+  //    completos contra un año en curso sin distorsión (comportamiento original).
+  //  - 'anual': el año completo, o los meses disponibles si aún está en curso (sin recorte).
+  //  - 'promedio': el total anual dividido por los meses con dato ese año — normaliza años
+  //    parciales a un "ritmo mensual" comparable contra años completos.
+  function valorComparadorCasino(sumFn, casino, year, indicador, hastaMesAcum) {
+    const modo = state.casinosComparadorModo;
+    if (modo === 'anual') return sumFn([casino], year, indicador, 12).valor;
+    if (modo === 'promedio') {
+      const r = sumFn([casino], year, indicador, 12);
+      return r.valor === null || !r.meses ? null : r.valor / r.meses;
+    }
+    return sumFn([casino], year, indicador, hastaMesAcum).valor;
+  }
+
   function renderCasinosComparador() {
     const yFrom = state.yearFrom, yTo = state.yearTo;
     // Mismo criterio de período acumulado equivalente que renderIndustria(): si yTo está en
-    // curso, se corta la evolución de TODOS los años al mismo mes.
+    // curso, se corta la evolución de TODOS los años al mismo mes (solo aplica en modo 'acumulado').
     const hastaMes = monthsWithData(CASINOS.map((c) => c.Casino), yTo, 'Visitas') || 12;
-    const sufijoLabel = hastaMes < 12 ? ` (Acum. ${MONTHS_ES[hastaMes - 1]})` : '';
+    const sufijoLabel = state.casinosComparadorModo === 'acumulado' && hastaMes < 12 ? ` (Acum. ${MONTHS_ES[hastaMes - 1]})` : '';
     const labels = yearsInRange(yFrom, yTo).map(String);
     // Degradado de azules por orden de selección (mismo criterio que Equipamiento): un mismo
     // casino queda con el mismo tono en este gráfico y en el de Visitas de abajo (ambos recorren
@@ -1285,7 +1316,7 @@
     const datasets = state.casinosSeleccionados.map((casino, i) => ({
       label: casino + sufijoLabel, borderColor: casinoTones[i],
       backgroundColor: casinoTones[i].replace('hsl(', 'hsla(').replace(')', ', 0.13)'),
-      data: labels.map((y) => aggFlowReal([casino], Number(y), 'Win Total', hastaMes).valor),
+      data: labels.map((y) => valorComparadorCasino(aggFlowReal, casino, Number(y), 'Win Total', hastaMes)),
       tension: 0.2, fill: false,
     }));
     makeLineChart(document.getElementById('chart-casinos-comp'), 'casinosComp', labels, datasets, null, true);
@@ -1297,13 +1328,13 @@
   function renderCasinosComparadorVisitas() {
     const yFrom = state.yearFrom, yTo = state.yearTo;
     const hastaMes = monthsWithData(CASINOS.map((c) => c.Casino), yTo, 'Visitas') || 12;
-    const sufijoLabel = hastaMes < 12 ? ` (Acum. ${MONTHS_ES[hastaMes - 1]})` : '';
+    const sufijoLabel = state.casinosComparadorModo === 'acumulado' && hastaMes < 12 ? ` (Acum. ${MONTHS_ES[hastaMes - 1]})` : '';
     const labels = yearsInRange(yFrom, yTo).map(String);
     const casinoTones = brandShades(state.casinosSeleccionados.length);
     const datasets = state.casinosSeleccionados.map((casino, i) => ({
       label: casino + sufijoLabel, borderColor: casinoTones[i],
       backgroundColor: casinoTones[i].replace('hsl(', 'hsla(').replace(')', ', 0.13)'),
-      data: labels.map((y) => sumFlowNominal([casino], Number(y), 'Visitas', hastaMes).valor),
+      data: labels.map((y) => valorComparadorCasino(sumFlowNominal, casino, Number(y), 'Visitas', hastaMes)),
       tension: 0.2, fill: false,
     }));
     makeLineChart(document.getElementById('chart-casinos-comp-visitas'), 'casinosCompVisitas', labels, datasets,
