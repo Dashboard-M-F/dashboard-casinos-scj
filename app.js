@@ -2217,6 +2217,191 @@
   }
 
   // ---------------------------------------------------------------------
+  // Vista: Impuestos y Retorno
+  // ---------------------------------------------------------------------
+  // Fuente: BD histórica de boletines SCJ (00_BD_Historica_Boletines_SCJ.xlsx), consolidada por
+  // sala (comuna + segmento). Impuesto Específico (20%, Ley 19.995), IVA al Juego e Impuesto por
+  // Entradas cubren todo el período 2017-2026. Monto Apostado en Máquinas y Retorno Real Promedio
+  // en Máquinas solo están disponibles entre enero 2017 y marzo 2020 — la SCJ dejó de publicar
+  // esa apertura después de esa fecha.
+
+  function renderImpuestos() {
+    const el = document.getElementById('view-impuestos');
+    const yTo = state.yearTo, prevYear = yTo - 1;
+    const all = CASINOS.map((c) => c.Casino);
+    const hastaMes = monthsWithData(all, yTo, 'Visitas') || 12;
+    const periodoLabel = hastaMes === 12 ? `Año ${yTo} completo` : `Acumulado Ene-${MONTHS_ES[hastaMes - 1]} ${yTo}`;
+
+    const especifico = aggFlowReal(all, yTo, 'Impuesto Especifico', hastaMes);
+    const especificoPrev = aggFlowReal(all, prevYear, 'Impuesto Especifico', hastaMes);
+    const iva = aggFlowReal(all, yTo, 'IVA Juego', hastaMes);
+    const ivaPrev = aggFlowReal(all, prevYear, 'IVA Juego', hastaMes);
+    const entradas = aggFlowReal(all, yTo, 'Impuesto Entradas', hastaMes);
+    const entradasPrev = aggFlowReal(all, prevYear, 'Impuesto Entradas', hastaMes);
+    const ingresos = aggFlowReal(all, yTo, 'Win Total', hastaMes);
+    const ingresosPrev = aggFlowReal(all, prevYear, 'Win Total', hastaMes);
+
+    const totalImp = (especifico.valor || 0) + (iva.valor || 0) + (entradas.valor || 0);
+    const totalImpPrev = (especificoPrev.valor || 0) + (ivaPrev.valor || 0) + (entradasPrev.valor || 0);
+    const cargaTrib = ingresos.valor ? totalImp / ingresos.valor : null;
+    const cargaTribPrev = ingresosPrev.valor ? totalImpPrev / ingresosPrev.valor : null;
+
+    const bullets = [
+      `La industria pagó ${fmtMoneyMM(totalImp)} en impuestos (Específico + IVA + Entradas) en ${periodoLabel.toLowerCase()}, ${deltaClass(yoy(totalImp, totalImpPrev)) === 'negative' ? 'una caída de' : 'un alza de'} ${fmtPctDelta(yoy(totalImp, totalImpPrev))} respecto a igual período de ${prevYear}.`,
+      cargaTrib !== null ? `Los impuestos equivalen a ${fmtPctPlain(cargaTrib)} de los ingresos brutos del juego (${fmtPctPlain(cargaTribPrev)} en igual período de ${prevYear}).` : '',
+    ];
+
+    // Serie anual de impuestos para el gráfico apilado (cada año usa su propio hastaMes
+    // equivalente, mismo criterio que el resto del dashboard para no comparar años completos
+    // contra un año en curso).
+    const yearsList = yearsInRange(state.yearFrom, state.yearTo);
+    const espSerie = yearsList.map((y) => aggFlowReal(all, y, 'Impuesto Especifico', monthsWithData(all, y, 'Visitas') || 12).valor);
+    const ivaSerie = yearsList.map((y) => aggFlowReal(all, y, 'IVA Juego', monthsWithData(all, y, 'Visitas') || 12).valor);
+    const entSerie = yearsList.map((y) => aggFlowReal(all, y, 'Impuesto Entradas', monthsWithData(all, y, 'Visitas') || 12).valor);
+
+    // Monto apostado / retorno: solo años con datos (2017-2020, el último parcial). El retorno
+    // industria se pondera por el monto apostado de cada casino ese mes (no es un simple promedio
+    // entre casinos, que sobre-pesaría a los casinos más chicos).
+    function retornoIndustriaAnual(year) {
+      let sumApostado = 0, sumRetXApostado = 0;
+      all.forEach((c) => {
+        for (let m = 1; m <= 12; m++) {
+          const apostado = monthValue(c, year, m, 'Monto Apostado Maquinas');
+          const retorno = monthValue(c, year, m, 'Retorno Maquinas');
+          if (apostado !== null && retorno !== null) { sumApostado += apostado; sumRetXApostado += apostado * retorno; }
+        }
+      });
+      return { apostado: sumApostado || null, retorno: sumApostado ? sumRetXApostado / sumApostado : null };
+    }
+    const retornoYears = YEARS.filter((y) => monthsWithData(all, y, 'Monto Apostado Maquinas') > 0);
+    const retornoPorAnio = retornoYears.map((y) => ({ year: y, meses: monthsWithData(all, y, 'Monto Apostado Maquinas'), ...retornoIndustriaAnual(y) }));
+    const retornoLabels = retornoPorAnio.map((r) => r.meses < 12 ? `${r.year} (parcial)` : String(r.year));
+
+    function retornoCasinoAnual(casino, year) {
+      let sumApostado = 0, sumRetXApostado = 0;
+      for (let m = 1; m <= 12; m++) {
+        const apostado = monthValue(casino, year, m, 'Monto Apostado Maquinas');
+        const retorno = monthValue(casino, year, m, 'Retorno Maquinas');
+        if (apostado !== null && retorno !== null) { sumApostado += apostado; sumRetXApostado += apostado * retorno; }
+      }
+      return { apostado: sumApostado || null, retorno: sumApostado ? sumRetXApostado / sumApostado : null };
+    }
+    const fullRetornoYears = retornoPorAnio.filter((r) => r.meses === 12).map((r) => r.year);
+    const retornoTableYear = fullRetornoYears.length ? fullRetornoYears[fullRetornoYears.length - 1] : null;
+
+    el.innerHTML = `
+      <div class="section-title">Impuestos y Retorno del Juego</div>
+      <div class="section-sub">${periodoLabel} vs. igual período ${prevYear} · valores ${valueModeLabel()}</div>
+      ${insightsPanel(bullets)}
+      <div class="kpi-grid">
+        ${kpiCard('Impuesto Específico (20%)', fmtMoneyMM(especifico.valor), yoy(especifico.valor, especificoPrev.valor))}
+        ${kpiCard('IVA al Juego', fmtMoneyMM(iva.valor), yoy(iva.valor, ivaPrev.valor))}
+        ${kpiCard('Impuesto por Entradas', fmtMoneyMM(entradas.valor), yoy(entradas.valor, entradasPrev.valor))}
+        ${kpiCard('Carga tributaria s/ Ingresos Brutos', fmtPctPlain(cargaTrib), yoy(cargaTrib, cargaTribPrev))}
+      </div>
+
+      <div class="card">
+        <div class="section-title" style="margin-top:0;">Evolución de impuestos por año</div>
+        <div class="chart-wrap tall"><canvas id="chart-impuestos-evol"></canvas></div>
+      </div>
+
+      <div class="card">
+        <div class="section-title" style="margin-top:0;">Impuestos por holding — ${periodoLabel}</div>
+        <div class="table-scroll" id="tabla-impuestos-holding"></div>
+      </div>
+
+      <div class="section-title">Monto apostado y retorno real en máquinas de azar</div>
+      <div class="section-sub">Fuente: boletines SCJ · disponible solo entre enero 2017 y marzo 2020 — la Superintendencia dejó de publicar esta apertura después de esa fecha.</div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="section-title" style="margin-top:0;">Monto apostado en máquinas — industria</div>
+          <div class="chart-wrap"><canvas id="chart-monto-apostado"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="section-title" style="margin-top:0;">Retorno real promedio en máquinas — industria</div>
+          <div class="chart-wrap"><canvas id="chart-retorno-maquinas"></canvas></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title" style="margin-top:0;">Detalle por casino${retornoTableYear ? ` — Año ${retornoTableYear}` : ''}</div>
+        <div class="table-scroll" id="tabla-retorno-casino"></div>
+      </div>
+    `;
+
+    makeBarChart(document.getElementById('chart-impuestos-evol'), 'impuestosEvol', yearsList.map(String), [
+      { label: 'Impuesto Específico', data: espSerie, backgroundColor: '#0B1F33' },
+      { label: 'IVA al Juego', data: ivaSerie, backgroundColor: '#1F4E78' },
+      { label: 'Impuesto por Entradas', data: entSerie, backgroundColor: '#5B9BD5' },
+    ], { scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: (v) => fmtMoneyMM(v) } } } });
+
+    renderTablaImpuestosHolding(document.getElementById('tabla-impuestos-holding'), yTo, prevYear, hastaMes);
+
+    if (retornoPorAnio.length) {
+      makeLineChart(document.getElementById('chart-monto-apostado'), 'montoApostado', retornoLabels,
+        [{ label: 'Monto apostado', data: retornoPorAnio.map((r) => r.apostado), borderColor: '#0B1F33', backgroundColor: 'rgba(11,31,51,.12)', fill: true, tension: 0.2 }],
+        { scales: { y: { ticks: { callback: (v) => fmtMoneyMM(v) } } } });
+      makeLineChart(document.getElementById('chart-retorno-maquinas'), 'retornoMaquinas', retornoLabels,
+        [{ label: 'Retorno real promedio', data: retornoPorAnio.map((r) => r.retorno === null ? null : r.retorno * 100), borderColor: '#5B9BD5', backgroundColor: 'rgba(91,155,213,.12)', fill: true, tension: 0.2 }],
+        { scales: { y: { ticks: { callback: (v) => v.toFixed(1) + '%' } } } });
+    }
+
+    if (retornoTableYear) {
+      const rows = CASINOS.map((c) => {
+        const r = retornoCasinoAnual(c.Casino, retornoTableYear);
+        return { casino: c.Casino, holding: c.Holding, apostado: r.apostado, retorno: r.retorno };
+      }).filter((r) => r.apostado !== null).sort((a, b) => b.apostado - a.apostado);
+      let html = `<table class="data-table"><thead><tr>
+        <th>Casino</th><th>Holding</th><th class="num">Monto apostado</th><th class="num">Retorno real promedio</th>
+      </tr></thead><tbody>`;
+      rows.forEach((r) => {
+        html += `<tr><td>${r.casino}</td><td>${r.holding}</td>
+          <td class="num">${fmtMoneyMM(r.apostado)}</td><td class="num">${fmtPctPlain(r.retorno)}</td></tr>`;
+      });
+      html += '</tbody></table>';
+      document.getElementById('tabla-retorno-casino').innerHTML = html;
+    } else {
+      document.getElementById('tabla-retorno-casino').innerHTML = '<p class="small muted">No hay un año completo con datos de retorno en máquinas en el rango seleccionado.</p>';
+    }
+  }
+
+  function renderTablaImpuestosHolding(container, year, prevYear, hastaMes) {
+    let totEspAct = 0, totEspPrev = 0, totIvaAct = 0, totIvaPrev = 0, totEntAct = 0, totEntPrev = 0, totIngAct = 0;
+    const rows = HOLDING_ORDER.map((h) => {
+      const casinosH = casinosFor('holding', h);
+      const esp = aggFlowReal(casinosH, year, 'Impuesto Especifico', hastaMes).valor || 0;
+      const espP = aggFlowReal(casinosH, prevYear, 'Impuesto Especifico', hastaMes).valor || 0;
+      const iva = aggFlowReal(casinosH, year, 'IVA Juego', hastaMes).valor || 0;
+      const ivaP = aggFlowReal(casinosH, prevYear, 'IVA Juego', hastaMes).valor || 0;
+      const ent = aggFlowReal(casinosH, year, 'Impuesto Entradas', hastaMes).valor || 0;
+      const entP = aggFlowReal(casinosH, prevYear, 'Impuesto Entradas', hastaMes).valor || 0;
+      const ing = aggFlowReal(casinosH, year, 'Win Total', hastaMes).valor || 0;
+      totEspAct += esp; totEspPrev += espP; totIvaAct += iva; totIvaPrev += ivaP; totEntAct += ent; totEntPrev += entP; totIngAct += ing;
+      return { h, esp, iva, ent, total: esp + iva + ent, totalP: espP + ivaP + entP, ing };
+    });
+    let html = `<table class="data-table"><thead><tr>
+      <th>Holding</th><th class="num">Impuesto Específico</th><th class="num">IVA al Juego</th>
+      <th class="num">Impuesto Entradas</th><th class="num">Total Impuestos</th><th class="num">Var.%</th>
+      <th class="num">% s/ Ingresos Brutos</th>
+    </tr></thead><tbody>`;
+    rows.sort((a, b) => b.total - a.total).forEach((r) => {
+      html += `<tr><td><span class="legend-dot" style="background:${HOLDING_TONES[r.h]}"></span>${r.h}</td>
+        <td class="num">${fmtMoneyMM(r.esp)}</td><td class="num">${fmtMoneyMM(r.iva)}</td>
+        <td class="num">${fmtMoneyMM(r.ent)}</td><td class="num"><strong>${fmtMoneyMM(r.total)}</strong></td>
+        <td class="num">${fmtPctDelta(yoy(r.total, r.totalP))}</td>
+        <td class="num">${fmtPctPlain(r.ing ? r.total / r.ing : null)}</td></tr>`;
+    });
+    const totalAct = totEspAct + totIvaAct + totEntAct, totalPrevAll = totEspPrev + totIvaPrev + totEntPrev;
+    html += `<tr class="total-row"><td>Total Industria</td>
+      <td class="num">${fmtMoneyMM(totEspAct)}</td><td class="num">${fmtMoneyMM(totIvaAct)}</td>
+      <td class="num">${fmtMoneyMM(totEntAct)}</td><td class="num">${fmtMoneyMM(totalAct)}</td>
+      <td class="num">${fmtPctDelta(yoy(totalAct, totalPrevAll))}</td>
+      <td class="num">${fmtPctPlain(totIngAct ? totalAct / totIngAct : null)}</td></tr>`;
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  }
+
+  // ---------------------------------------------------------------------
   // Vista: Datos y Actualización
   // ---------------------------------------------------------------------
 
@@ -2356,6 +2541,7 @@
       case 'casinos': renderCasinos(); break;
       case 'mensual': renderResumenMensual(); break;
       case 'equipamiento': renderEquipamiento(); break;
+      case 'impuestos': renderImpuestos(); break;
       case 'datos': renderDatos(); break;
       case 'admin': renderAdmin(); break;
     }
