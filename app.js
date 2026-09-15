@@ -1219,7 +1219,7 @@
       <div class="section-title">Top 5 — Ingresos Brutos del Juego ${periodoLabel}</div>
       <div class="card top5-card">${top5Html}</div>
 
-      <div class="section-title">Visitas y gasto promedio por casino${state.periodMode === 'anual' ? ` — ${periodoLabel}` : ''}</div>
+      <div class="section-title">Visitas, Ingresos Brutos y gasto promedio por casino${state.periodMode === 'anual' ? ` — ${periodoLabel}` : ''}</div>
       <div class="section-sub" style="margin-top:-4px;">Detalle completo de los ${CASINOS.length} casinos de la industria</div>
       <div class="card">
         ${periodModeSelectHtml('sel-period-mode-casinos')}
@@ -1433,30 +1433,36 @@
     const totalWin = tot19995Win + totMunWin;
     const gasto = (vis, win) => vis ? win / vis : null;
     const visVal = (v) => periodMode === 'promedio' ? v / nYrs : v;
+    const winVal = (v) => periodMode === 'promedio' ? v / nYrs : v;
 
     function bloque(rows, label, totVis, totWin) {
       let html = '';
       rows.sort((a, b) => b.vis - a.vis).forEach((r) => {
         html += `<tr><td>${r.casino}</td><td class="num">${fmtNum(visVal(r.vis))}</td>
           <td class="num">${fmtPctPlain(totalVis ? r.vis / totalVis : null)}</td>
-          <td class="num">${fmtMoney(gasto(r.vis, r.win))}</td></tr>`;
+          <td class="num">${fmtMoney(gasto(r.vis, r.win))}</td>
+          <td class="num">${fmtMoneyMM(winVal(r.win))}</td></tr>`;
       });
       html += `<tr class="subtotal-row"><td>Sub total ${label}</td><td class="num">${fmtNum(visVal(totVis))}</td>
         <td class="num">${fmtPctPlain(totalVis ? totVis / totalVis : null)}</td>
-        <td class="num">${fmtMoney(gasto(totVis, totWin))}</td></tr>`;
+        <td class="num">${fmtMoney(gasto(totVis, totWin))}</td>
+        <td class="num">${fmtMoneyMM(winVal(totWin))}</td></tr>`;
       return html;
     }
 
     const colLabel = periodMode === 'promedio' ? `Visitas — promedio anual ${yFrom}–${yTo}` : `Visitas — total ${yFrom}–${yTo}`;
+    const winColLabel = periodMode === 'promedio' ? `Ingresos Brutos — promedio anual ${yFrom}–${yTo}` : `Ingresos Brutos — total ${yFrom}–${yTo}`;
     let html = `<table class="data-table"><thead><tr>
       <th>Nombre comercial</th><th class="num">${colLabel}</th>
       <th class="num">Participación industria</th><th class="num">Gasto promedio del período</th>
+      <th class="num">${winColLabel}</th>
     </tr></thead><tbody>`;
     html += bloque(rows19995, 'casinos 19.995', tot19995Vis, tot19995Win);
     html += bloque(rowsMunicipal, 'casinos municipales', totMunVis, totMunWin);
     html += `<tr class="total-row"><td>Total industria</td><td class="num">${fmtNum(visVal(totalVis))}</td>
       <td class="num">100%</td>
-      <td class="num">${fmtMoney(gasto(totalVis, totalWin))}</td></tr>`;
+      <td class="num">${fmtMoney(gasto(totalVis, totalWin))}</td>
+      <td class="num">${fmtMoneyMM(winVal(totalWin))}</td></tr>`;
     html += '</tbody></table>';
     container.innerHTML = html;
   }
